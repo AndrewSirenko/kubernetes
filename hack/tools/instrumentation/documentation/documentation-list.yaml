@@ -7302,6 +7302,17 @@
     endpoint: /metrics
   - component: kubelet
     endpoint: /metrics
+- name: volume_manager_flexvolume_volumes
+  help: Number of volumes in Volume Manager that use the deprecated FlexVolume plugin,
+    by FlexVolume driver. Only drivers installed on the node are reported.
+  type: Custom
+  stabilityLevel: ALPHA
+  labels:
+  - driver
+  - state
+  componentEndpoints:
+  - component: kubelet
+    endpoint: /metrics
 - name: volume_manager_selinux_container_errors_total
   help: Number of errors when kubelet cannot compute SELinux context for a container.
     Kubelet can't start such a Pod then and it will retry, therefore value of this
