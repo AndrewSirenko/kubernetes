@@ -36,6 +36,8 @@ type PluginNameMapper interface {
 // PluginManager keeps track of migrated state of in-tree plugins
 type PluginManager struct {
 	PluginNameMapper
+	// flexLookup, when set, enables FlexVolume -> CSI migration (CSIMigrationFlexVolume).
+	flexLookup FlexVolumeMappingLookup
 }
 
 // NewPluginManager returns a new PluginManager instance
@@ -107,6 +109,10 @@ func (pm PluginManager) IsMigrationEnabledForPlugin(pluginName string) bool {
 func (pm PluginManager) IsMigratable(spec *volume.Spec) (bool, error) {
 	if spec == nil {
 		return false, fmt.Errorf("could not find if plugin is migratable because volume spec is nil")
+	}
+
+	if isFlex, migratable := pm.isFlexVolumeMigratable(spec); isFlex {
+		return migratable, nil
 	}
 
 	pluginName, _ := pm.GetInTreePluginNameFromSpec(spec.PersistentVolume, spec.Volume)

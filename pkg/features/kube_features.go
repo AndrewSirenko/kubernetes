@@ -120,6 +120,14 @@ const (
 	// through the dedicated secrets field in NodePublishVolumeRequest instead of the volume_context field.
 	CSIServiceAccountTokenSecrets featuregate.Feature = "CSIServiceAccountTokenSecrets"
 
+	// owner: @AndrewSirenko
+	// kep: (draft) FlexVolume to CSI migration
+	//
+	// Enables redirecting FlexVolume volumes to the CSI driver whose CSIDriver
+	// object declares, via the storage.kubernetes.io/migrated-from-flexvolume
+	// annotation, that it replaces the FlexVolume driver.
+	CSIMigrationFlexVolume featuregate.Feature = "CSIMigrationFlexVolume"
+
 	// owner: @fengzixu
 	//
 	// Enables kubelet to detect CSI volume condition and send the event of the abnormal volume to the corresponding pod that is using it.
@@ -1280,6 +1288,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 		{Version: version.MustParse("1.36"), Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // GA in 1.36; remove in 1.39
 	},
 
+	CSIMigrationFlexVolume: {
+		{Version: version.MustParse("1.38"), Default: false, PreRelease: featuregate.Alpha},
+	},
+
 	CSIVolumeHealth: {
 		{Version: version.MustParse("1.21"), Default: false, PreRelease: featuregate.Alpha},
 	},
@@ -2353,6 +2365,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	CPUManagerPolicyOptions: {},
 
 	CRIListStreaming: {},
+
+	CSIMigrationFlexVolume: {},
 
 	CSIServiceAccountTokenSecrets: {},
 

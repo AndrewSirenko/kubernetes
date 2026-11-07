@@ -221,8 +221,15 @@ func NewVolumeManager(
 			blockVolumePathHandler)),
 	}
 
-	intreeToCSITranslator := csitrans.New()
-	csiMigratedPluginManager := csimigration.NewPluginManager(intreeToCSITranslator)
+	var intreeToCSITranslator csimigration.InTreeToCSITranslator = csitrans.New()
+	csiMigratedPluginManager := csimigration.NewPluginManager(csitrans.New())
+	if utilfeature.DefaultFeatureGate.Enabled(features.CSIMigrationFlexVolume) {
+		if kvh, ok := volumePluginMgr.Host.(volume.KubeletVolumeHost); ok && kvh.CSIDriverLister() != nil {
+			flexLookup := csimigration.CSIDriverFlexVolumeMappingLookup{Lister: kvh.CSIDriverLister()}
+			intreeToCSITranslator = csimigration.NewFlexVolumeAwareTranslator(intreeToCSITranslator, flexLookup)
+			csiMigratedPluginManager = csiMigratedPluginManager.WithFlexVolumeMigration(flexLookup)
+		}
+	}
 
 	vm.intreeToCSITranslator = intreeToCSITranslator
 	vm.csiMigratedPluginManager = csiMigratedPluginManager
