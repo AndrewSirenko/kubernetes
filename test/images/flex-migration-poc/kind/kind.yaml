@@ -1,6 +1,17 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: flexpoc
+# Hosts on cgroup v1 with the cgroupfs driver (some dev desktops) need these
+# patches; they are harmless on cgroup v2 hosts with kind's defaults removed.
+kubeadmConfigPatches:
+- |
+  kind: KubeletConfiguration
+  failCgroupV1: false
+  cgroupDriver: cgroupfs
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    SystemdCgroup = false
 nodes:
 - role: control-plane
 - role: worker

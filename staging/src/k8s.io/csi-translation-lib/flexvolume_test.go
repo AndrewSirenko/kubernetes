@@ -134,4 +134,7 @@ func TestTranslateFlexVolumeInlineVolumeToCSI(t *testing.T) {
 	if r := a.Spec.CSI.NodePublishSecretRef; r == nil || r.Name != "s" || r.Namespace != "ns" {
 		t.Errorf("unexpected secret ref %+v", r)
 	}
+	if m := a.Spec.VolumeMode; m == nil || *m != v1.PersistentVolumeFilesystem {
+		t.Errorf("inline volume must have VolumeMode Filesystem, got %v", m)
+	}
 }

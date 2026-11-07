@@ -33,6 +33,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -117,12 +118,21 @@ func backingDir(req interface {
 	return filepath.Join(*storageDir, clean), nil
 }
 
+// isMountPoint reads mountinfo, because a bind mount from the same filesystem
+// has the same st_dev as its parent.
 func isMountPoint(p string) bool {
-	var st, parent syscall.Stat_t
-	if syscall.Stat(p, &st) != nil || syscall.Stat(filepath.Dir(p), &parent) != nil {
+	b, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
 		return false
 	}
-	return st.Dev != parent.Dev || st.Ino == parent.Ino
+	p = filepath.Clean(p)
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) > 4 && strings.ReplaceAll(f[4], `\040`, " ") == p {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *driver) NodePublishVolume(_ context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {

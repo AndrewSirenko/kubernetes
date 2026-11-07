@@ -146,6 +146,9 @@ func TranslateFlexVolumeInlineVolumeToCSI(vol *v1.Volume, podNamespace string, m
 		return nil, err
 	}
 
+	// Inline volumes are always Filesystem; nothing defaults it for us because
+	// this PV never goes through the API server.
+	fsMode := v1.PersistentVolumeFilesystem
 	pv := &v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			// Must be unique per volume: it becomes part of the staging path.
@@ -162,6 +165,7 @@ func TranslateFlexVolumeInlineVolumeToCSI(vol *v1.Volume, podNamespace string, m
 				},
 			},
 			AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteMany},
+			VolumeMode:  &fsMode,
 		},
 	}
 	if flex.SecretRef != nil && flex.SecretRef.Name != "" {

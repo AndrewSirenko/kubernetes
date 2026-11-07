@@ -164,6 +164,8 @@ func translate(pv *v1.PersistentVolume, mappings map[string]csitrans.FlexVolumeM
 	for k, v := range pv.Annotations {
 		out.Annotations[k] = v
 	}
+	// The old manifest would revert the source on the next kubectl apply.
+	delete(out.Annotations, v1.LastAppliedConfigAnnotation)
 	out.Annotations[rewrittenFromAnnotation] = from
 	out.Status = v1.PersistentVolumeStatus{}
 	return out, from, nil

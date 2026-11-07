@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: writer-pv
+  namespace: demo
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: flexpoc-worker
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: writer
+    image: localhost/flexpoc-writer:poc
+    imagePullPolicy: Never
+    env:
+    - name: POD_NAME
+      valueFrom: {fieldRef: {fieldPath: metadata.name}}
+    - name: POD_UID
+      valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: flex-pvc
