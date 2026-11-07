@@ -206,6 +206,15 @@ func TestWarnings(t *testing.T) {
 			expected: []string{`spec.volumes[0].scaleIO: deprecated in v1.16, non-functional in v1.22+`},
 		},
 		{
+			name: "flexVolume",
+			template: &api.PodTemplateSpec{Spec: api.PodSpec{
+				Volumes: []api.Volume{
+					{Name: "s", VolumeSource: api.VolumeSource{FlexVolume: &api.FlexVolumeSource{Driver: "example.com/foo"}}},
+				}},
+			},
+			expected: []string{`spec.volumes[0].flexVolume: deprecated in v1.23; use a CSI driver instead`},
+		},
+		{
 			name: "flocker",
 			template: &api.PodTemplateSpec{Spec: api.PodSpec{
 				Volumes: []api.Volume{
