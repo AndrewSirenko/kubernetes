@@ -1,0 +1,13 @@
+#!/bin/bash
+# docker -> finch shim for `kind build node-image` (Docker Desktop not allowed).
+# nerdctl commit does not support --change ENV; drop those (kind only sets empty proxies).
+if [ "$1" = "commit" ]; then
+  args=(); skip=0
+  for a in "$@"; do
+    if [ $skip = 1 ]; then skip=0; case "$a" in ENV*) continue;; *) args+=(--change "$a"); continue;; esac; fi
+    if [ "$a" = "--change" ]; then skip=1; continue; fi
+    args+=("$a")
+  done
+  exec finch "${args[@]}"
+fi
+exec finch "$@"
