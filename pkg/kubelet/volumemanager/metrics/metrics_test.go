@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"strings"
 	"testing"
 
 	"k8s.io/klog/v2/ktesting"
@@ -24,6 +25,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/component-base/metrics/testutil"
 	"k8s.io/kubernetes/pkg/kubelet/volumemanager/cache"
 	"k8s.io/kubernetes/pkg/volume"
 
@@ -124,5 +126,74 @@ func TestMetricCollection(t *testing.T) {
 	if fakePluginCount != 1 {
 		t.Errorf("getVolumeCount failed. Expected <1> fake-plugin volume in ActualStateOfWorld, got <%d>",
 			fakePluginCount)
+	}
+}
+
+func TestFlexVolumeMetricCollection(t *testing.T) {
+	logger, _ := ktesting.NewTestContext(t)
+	volumePluginMgr, fakePlugin := volumetesting.GetTestKubeletVolumePluginMgr(t)
+	seLinuxTranslator := util.NewFakeSELinuxLabelTranslator()
+	dsw := cache.NewDesiredStateOfWorld(volumePluginMgr, seLinuxTranslator)
+	asw := cache.NewActualStateOfWorld(k8stypes.NodeName("node-name"), volumePluginMgr, nil)
+	pod := &v1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod1", UID: "pod1uid"},
+		Spec: v1.PodSpec{
+			Volumes: []v1.Volume{
+				{
+					Name:         "flex-volume",
+					VolumeSource: v1.VolumeSource{FlexVolume: &v1.FlexVolumeSource{Driver: "example.com/fake"}},
+				},
+				{
+					Name:         "flex-volume-2",
+					VolumeSource: v1.VolumeSource{FlexVolume: &v1.FlexVolumeSource{Driver: "example.com/fake"}},
+				},
+				{
+					Name:         "not-flex",
+					VolumeSource: v1.VolumeSource{GCEPersistentDisk: &v1.GCEPersistentDiskVolumeSource{PDName: "fake-device1"}},
+				},
+			},
+		},
+	}
+	podName := util.GetUniquePodName(pod)
+
+	for i := range pod.Spec.Volumes {
+		volumeSpec := &volume.Spec{Volume: &pod.Spec.Volumes[i]}
+		generatedVolumeName, err := dsw.AddPodToVolume(logger, podName, pod, volumeSpec, volumeSpec.Name(), "", nil /* seLinuxOptions */)
+		if err != nil {
+			t.Fatalf("AddPodToVolume failed: %v", err)
+		}
+		// Only the first flex volume and the non-flex volume get mounted.
+		if i == 1 {
+			continue
+		}
+		mounter, err := fakePlugin.NewMounter(volumeSpec, pod)
+		if err != nil {
+			t.Fatalf("NewMounter failed: %v", err)
+		}
+		if err := asw.MarkVolumeAsAttached(logger, generatedVolumeName, volumeSpec, "", "fake/device/path"); err != nil {
+			t.Fatalf("MarkVolumeAsAttached failed: %v", err)
+		}
+		err = asw.AddPodToVolume(operationexecutor.MarkVolumeOpts{
+			PodName:          podName,
+			PodUID:           pod.UID,
+			VolumeName:       generatedVolumeName,
+			Mounter:          mounter,
+			VolumeSpec:       volumeSpec,
+			VolumeMountState: operationexecutor.VolumeMounted,
+		})
+		if err != nil {
+			t.Fatalf("AddPodToVolume (asw) failed: %v", err)
+		}
+	}
+
+	collector := &totalVolumesCollector{asw: asw, dsw: dsw, pluginMgr: volumePluginMgr}
+	want := `
+# HELP volume_manager_flexvolume_volumes [ALPHA] Number of volumes in Volume Manager that use the deprecated FlexVolume plugin, by FlexVolume driver. Only drivers installed on the node are reported.
+# TYPE volume_manager_flexvolume_volumes gauge
+volume_manager_flexvolume_volumes{driver="example.com/fake",state="actual_state_of_world"} 1
+volume_manager_flexvolume_volumes{driver="example.com/fake",state="desired_state_of_world"} 2
+`
+	if err := testutil.CustomCollectAndCompare(collector, strings.NewReader(want), volumeManagerFlexVolumes); err != nil {
+		t.Fatal(err)
 	}
 }

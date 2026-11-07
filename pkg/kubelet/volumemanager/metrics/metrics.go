@@ -31,6 +31,7 @@ const (
 
 	// Metric keys for Volume Manager.
 	volumeManagerTotalVolumes                     = "volume_manager_total_volumes"
+	volumeManagerFlexVolumes                      = "volume_manager_flexvolume_volumes"
 	reconstructVolumeOperationsTotal              = "reconstruct_volume_operations_total"
 	reconstructVolumeOperationsErrorsTotal        = "reconstruct_volume_operations_errors_total"
 	forceCleanedFailedVolumeOperationsTotal       = "force_cleaned_failed_volume_operations_total"
@@ -44,6 +45,15 @@ var (
 		volumeManagerTotalVolumes,
 		"Number of volumes in Volume Manager",
 		[]string{"plugin_name", "state"},
+		nil,
+		metrics.ALPHA, "",
+	)
+
+	flexVolumesDesc = metrics.NewDesc(
+		volumeManagerFlexVolumes,
+		"Number of volumes in Volume Manager that use the deprecated FlexVolume plugin, by FlexVolume driver. "+
+			"Only drivers installed on the node are reported.",
+		[]string{"driver", "state"},
 		nil,
 		metrics.ALPHA, "",
 	)
@@ -115,10 +125,20 @@ var _ metrics.StableCollector = &totalVolumesCollector{}
 // DescribeWithStability implements the metrics.StableCollector interface.
 func (c *totalVolumesCollector) DescribeWithStability(ch chan<- *metrics.Desc) {
 	ch <- totalVolumesDesc
+	ch <- flexVolumesDesc
 }
 
 // CollectWithStability implements the metrics.StableCollector interface.
 func (c *totalVolumesCollector) CollectWithStability(ch chan<- metrics.Metric) {
+	for stateName, driverCount := range c.getFlexVolumeCount() {
+		for driver, count := range driverCount {
+			ch <- metrics.NewLazyConstMetric(flexVolumesDesc,
+				metrics.GaugeValue,
+				float64(count),
+				driver,
+				stateName)
+		}
+	}
 	for stateName, pluginCount := range c.getVolumeCount() {
 		for pluginName, count := range pluginCount {
 			ch <- metrics.NewLazyConstMetric(totalVolumesDesc,
@@ -148,4 +168,38 @@ func (c *totalVolumesCollector) getVolumeCount() volumeCount {
 		counter.add("desired_state_of_world", pluginName)
 	}
 	return counter
+}
+
+// getFlexVolumeCount counts FlexVolume volumes per driver in the actual and
+// desired state of world. Volumes only enter either cache after the volume
+// plugin manager found a plugin for them, so the driver label is bounded by the
+// FlexVolume drivers installed on the node rather than by arbitrary pod specs.
+func (c *totalVolumesCollector) getFlexVolumeCount() volumeCount {
+	counter := make(volumeCount)
+	for _, mountedVolume := range c.asw.GetMountedVolumes() {
+		if driver, ok := flexVolumeDriver(mountedVolume.VolumeSpec); ok {
+			counter.add("actual_state_of_world", driver)
+		}
+	}
+	for _, volumeToMount := range c.dsw.GetVolumesToMount() {
+		if driver, ok := flexVolumeDriver(volumeToMount.VolumeSpec); ok {
+			counter.add("desired_state_of_world", driver)
+		}
+	}
+	return counter
+}
+
+// flexVolumeDriver returns the FlexVolume driver name if spec is a FlexVolume
+// inline volume or PersistentVolume.
+func flexVolumeDriver(spec *volume.Spec) (string, bool) {
+	switch {
+	case spec == nil:
+		return "", false
+	case spec.Volume != nil && spec.Volume.FlexVolume != nil:
+		return spec.Volume.FlexVolume.Driver, true
+	case spec.PersistentVolume != nil && spec.PersistentVolume.Spec.FlexVolume != nil:
+		return spec.PersistentVolume.Spec.FlexVolume.Driver, true
+	default:
+		return "", false
+	}
 }
