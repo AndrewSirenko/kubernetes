@@ -54,6 +54,15 @@ func (dsc *DaemonSetsController) rollingUpdate(ctx context.Context, ds *apps.Dae
 
 	now := dsc.failedPodsBackoff.Clock.Now()
 
+	// Nodes in graceful shutdown are not delete or surge-create candidates: the kubelet owns their
+	// pods' termination and rejects new pods. Their unavailable pods still count as unavailable.
+	suppressedNodes := make(map[string]bool)
+	for _, node := range nodeList {
+		if nodeShutdownSuppressed(node) {
+			suppressedNodes[node.Name] = true
+		}
+	}
+
 	// When not surging, we delete just enough pods to stay under the maxUnavailable limit, if any
 	// are necessary, and let the core loop create new instances on those nodes.
 	//
@@ -86,6 +95,11 @@ func (dsc *DaemonSetsController) rollingUpdate(ctx context.Context, ds *apps.Dae
 				// this pod is up to date, check its availability
 				if !podutil.IsPodAvailable(newPod, ds.Spec.MinReadySeconds, metav1.Time{Time: now}) {
 					// an unavailable new pod is counted against maxUnavailable
+					numUnavailable++
+				}
+			case suppressedNodes[nodeName]:
+				// this pod is old, but the node is in graceful shutdown: count it, don't replace it
+				if !podutil.IsPodAvailable(oldPod, ds.Spec.MinReadySeconds, metav1.Time{Time: now}) {
 					numUnavailable++
 				}
 			default:
@@ -166,6 +180,15 @@ func (dsc *DaemonSetsController) rollingUpdate(ctx context.Context, ds *apps.Dae
 			if podutil.IsPodAvailable(newPod, ds.Spec.MinReadySeconds, metav1.Time{Time: now}) {
 				numAvailable++
 			}
+		}
+
+		if suppressedNodes[nodeName] {
+			// the node is in graceful shutdown: no surge pod and no deletes, but a surge pod that
+			// isn't available yet still counts against maxSurge
+			if oldPod != nil && newPod != nil && !podutil.IsPodAvailable(newPod, ds.Spec.MinReadySeconds, metav1.Time{Time: now}) {
+				numSurge++
+			}
+			continue
 		}
 
 		switch {

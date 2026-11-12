@@ -36,6 +36,18 @@ var (
 		// These are the labels (dimensions)
 		[]string{"group", "resource"},
 	)
+
+	// NodeShutdownSuppressions counts nodes entering and leaving graceful-shutdown suppression
+	// (GracefulNodeShutdownInProgress turning True or no longer True), per KEP-6249.
+	NodeShutdownSuppressions = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      DaemonControllerSubsystem,
+			Name:           "node_shutdown_suppression_total",
+			Help:           "Number of times a node entered or left DaemonSet suppression because of graceful node shutdown.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"transition"},
+	)
 )
 
 var registerMetrics sync.Once
@@ -44,5 +56,6 @@ var registerMetrics sync.Once
 func Register() {
 	registerMetrics.Do(func() {
 		legacyregistry.MustRegister(DaemonsetRequeueSkips)
+		legacyregistry.MustRegister(NodeShutdownSuppressions)
 	})
 }
