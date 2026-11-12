@@ -96,6 +96,48 @@ type podManager struct {
 	clock                            clock.Clock
 	killPodFunc                      eviction.KillPodFunc
 	volumeManager                    volumemanager.VolumeManager
+
+	// terminatingTier is the index into shutdownGracePeriodByPodPriority of the tier
+	// currently being terminated, or -1 when no shutdown is in progress.
+	tierMutex       sync.Mutex
+	terminatingTier int
+}
+
+// tierOf returns the index of the shutdown tier a pod with the given priority belongs to,
+// using the same grouping as groupByPriority.
+func tierOf(shutdownGracePeriodByPodPriority []kubeletconfig.ShutdownGracePeriodByPodPriority, priority int32) int {
+	index := sort.Search(len(shutdownGracePeriodByPodPriority), func(i int) bool {
+		return shutdownGracePeriodByPodPriority[i].Priority >= priority
+	})
+	if index == len(shutdownGracePeriodByPodPriority) {
+		index = len(shutdownGracePeriodByPodPriority) - 1
+	} else if index > 0 && shutdownGracePeriodByPodPriority[index].Priority > priority {
+		index--
+	}
+	return index
+}
+
+// admitDuringShutdown reports whether a pod may still be admitted while the node is shutting
+// down: only if its tier has not started terminating yet.
+func (m *podManager) admitDuringShutdown(pod *v1.Pod) bool {
+	var priority int32
+	if pod.Spec.Priority != nil {
+		priority = *pod.Spec.Priority
+	}
+	m.tierMutex.Lock()
+	defer m.tierMutex.Unlock()
+	return tierOf(m.shutdownGracePeriodByPodPriority, priority) > m.terminatingTier
+}
+
+func (m *podManager) setTerminatingTier(tier int) {
+	m.tierMutex.Lock()
+	defer m.tierMutex.Unlock()
+	m.terminatingTier = tier
+}
+
+// resetTier clears the terminating tier after a cancelled shutdown.
+func (m *podManager) resetTier() {
+	m.setTerminatingTier(-1)
 }
 
 func newPodManager(conf *Config) *podManager {
@@ -122,13 +164,21 @@ func newPodManager(conf *Config) *podManager {
 		clock:                            conf.Clock,
 		killPodFunc:                      conf.KillPodFunc,
 		volumeManager:                    conf.VolumeManager,
+		terminatingTier:                  -1,
 	}
 }
 
 // killPods terminates pods by priority.
 func (m *podManager) killPods(activePods []*v1.Pod) error {
-	groups := groupByPriority(m.shutdownGracePeriodByPodPriority, activePods)
-	for _, group := range groups {
+	return m.killPodsByTier(func() []*v1.Pod { return activePods })
+}
+
+// killPodsByTier terminates pods tier by tier, re-reading the active pods at the start of each
+// tier so a pod admitted earlier in the shutdown is still terminated in its own tier.
+func (m *podManager) killPodsByTier(getPods func() []*v1.Pod) error {
+	for tier := range m.shutdownGracePeriodByPodPriority {
+		m.setTerminatingTier(tier)
+		group := groupByPriority(m.shutdownGracePeriodByPodPriority, getPods())[tier]
 		// If there are no pods in a particular range,
 		// then do not wait for pods in that priority range.
 		if len(group.Pods) == 0 {
