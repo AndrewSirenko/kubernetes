@@ -115,7 +115,7 @@ func NewManager(conf *Config) Manager {
 func (m *managerImpl) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
 	nodeShuttingDown := m.ShutdownStatus() != nil
 
-	if nodeShuttingDown {
+	if nodeShuttingDown && (attrs == nil || attrs.Pod == nil || !m.podManager.admitDuringShutdown(attrs.Pod)) {
 		return lifecycle.PodAdmitResult{
 			Admit:   false,
 			Reason:  NodeShutdownNotAdmittedReason,
@@ -279,6 +279,7 @@ func (m *managerImpl) start(ctx context.Context) (chan struct{}, error) {
 
 					m.processShutdownEvent()
 				} else {
+					m.podManager.resetTier()
 					// Publish the cleared shutdown conditions without waiting for the next status update.
 					go m.syncNodeStatus(ctx)
 					_ = m.acquireInhibitLock()
@@ -314,7 +315,6 @@ func (m *managerImpl) ShutdownStatus() error {
 
 func (m *managerImpl) processShutdownEvent() error {
 	m.logger.V(1).Info("Shutdown manager processing shutdown event")
-	activePods := m.getPods()
 
 	defer func() {
 		m.dbusCon.ReleaseInhibitLock(m.inhibitLock)
@@ -345,5 +345,5 @@ func (m *managerImpl) processShutdownEvent() error {
 		}()
 	}
 
-	return m.podManager.killPods(activePods)
+	return m.podManager.killPodsByTier(m.getPods)
 }
