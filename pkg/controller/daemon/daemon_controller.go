@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -1397,7 +1398,26 @@ func NodeShouldRunDaemonPod(logger klog.Logger, node *v1.Node, ds *apps.DaemonSe
 		return false, !hasUntoleratedTaint
 	}
 
+	// A node in graceful shutdown rejects every new pod in a tier that has started terminating,
+	// so creating daemon pods there only loops: create, reject, delete, create. Keep what's
+	// running and create nothing new, regardless of tolerations.
+	if nodeIsShuttingDown(node) {
+		return false, true
+	}
+
 	return true, true
+}
+
+// nodeIsShuttingDown reports whether kubelet's graceful node shutdown manager has started
+// shutting the node down. Demo signal only: kubelet reports it as a NotReady Ready condition
+// whose message contains "node is shutting down". Upstream would need a real API signal.
+func nodeIsShuttingDown(node *v1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == v1.NodeReady {
+			return c.Status != v1.ConditionTrue && strings.Contains(c.Message, "node is shutting down")
+		}
+	}
+	return false
 }
 
 // predicates checks if a DaemonSet's pod can run on a node.
