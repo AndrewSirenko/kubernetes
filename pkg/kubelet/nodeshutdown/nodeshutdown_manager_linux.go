@@ -279,6 +279,8 @@ func (m *managerImpl) start(ctx context.Context) (chan struct{}, error) {
 
 					m.processShutdownEvent()
 				} else {
+					// Publish the cleared shutdown conditions without waiting for the next status update.
+					go m.syncNodeStatus(ctx)
 					_ = m.acquireInhibitLock()
 				}
 			}

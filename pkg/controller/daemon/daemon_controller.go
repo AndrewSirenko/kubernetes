@@ -739,12 +739,44 @@ func (dsc *DaemonSetsController) addNode(logger klog.Logger, obj interface{}) {
 // If other calling functions need to use other properties of Node, shouldIgnoreNodeUpdate needs to be updated.
 func shouldIgnoreNodeUpdate(oldNode, curNode v1.Node) bool {
 	return apiequality.Semantic.DeepEqual(oldNode.Labels, curNode.Labels) &&
-		apiequality.Semantic.DeepEqual(oldNode.Spec.Taints, curNode.Spec.Taints)
+		apiequality.Semantic.DeepEqual(oldNode.Spec.Taints, curNode.Spec.Taints) &&
+		shutdownConditionStatus(&oldNode) == shutdownConditionStatus(&curNode)
+}
+
+// NodeGracefulNodeShutdownInProgress is the KEP-5683 node lifecycle condition the kubelet sets while
+// it's in graceful node shutdown. It's in k8s.io/api/core/v1 from v1.37; v1.36 doesn't have it, so
+// it's defined here.
+const NodeGracefulNodeShutdownInProgress v1.NodeConditionType = "GracefulNodeShutdownInProgress"
+
+// shutdownConditionStatus returns the status of the node's GracefulNodeShutdownInProgress condition,
+// or "" if it has none.
+func shutdownConditionStatus(node *v1.Node) v1.ConditionStatus {
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == NodeGracefulNodeShutdownInProgress {
+			return node.Status.Conditions[i].Status
+		}
+	}
+	return ""
+}
+
+// nodeShutdownSuppressed reports whether the controller must not act on the node because the kubelet
+// is in graceful node shutdown (KEP-6249). Only GracefulNodeShutdownInProgress=True counts: False,
+// Unknown and absent all mean no shutdown in progress, and DrainInProgress is ignored.
+func nodeShutdownSuppressed(node *v1.Node) bool {
+	return shutdownConditionStatus(node) == v1.ConditionTrue
 }
 
 func (dsc *DaemonSetsController) updateNode(logger klog.Logger, old, cur interface{}) {
 	oldNode := old.(*v1.Node)
 	curNode := cur.(*v1.Node)
+
+	if was, is := nodeShutdownSuppressed(oldNode), nodeShutdownSuppressed(curNode); was != is {
+		transition := "exit"
+		if is {
+			transition = "enter"
+		}
+		metrics.NodeShutdownSuppressions.WithLabelValues(transition).Inc()
+	}
 
 	if shouldIgnoreNodeUpdate(*oldNode, *curNode) {
 		return
@@ -853,8 +885,14 @@ func (dsc *DaemonSetsController) podsShouldBeOnNode(
 
 	shouldRun, shouldContinueRunning := NodeShouldRunDaemonPod(logger, node, ds)
 	daemonPods, exists := nodeToDaemonPods[node.Name]
+	// While the kubelet is in graceful node shutdown it rejects new pods, so create nothing there.
+	// Failed pods are still deleted, and running pods are left to the kubelet. The node still counts
+	// in desiredNumberScheduled, so the missing pod shows up as unavailable.
+	suppressed := nodeShutdownSuppressed(node)
 
 	switch {
+	case shouldRun && !exists && suppressed:
+		logger.V(4).Info("Node is in graceful shutdown, not creating daemon pod", "daemonset", klog.KObj(ds), "node", klog.KObj(node))
 	case shouldRun && !exists:
 		// If daemon pod is supposed to be running on node, but isn't, create daemon pod.
 		nodesNeedingDaemonPods = append(nodesNeedingDaemonPods, node.Name)
@@ -897,6 +935,11 @@ func (dsc *DaemonSetsController) podsShouldBeOnNode(
 			} else {
 				daemonPodsRunning = append(daemonPodsRunning, pod)
 			}
+		}
+
+		if suppressed {
+			// Running pods belong to the kubelet's shutdown; don't prune or replace them.
+			break
 		}
 
 		// When surge is not enabled, if there is more than 1 running pod on a node delete all but the oldest
